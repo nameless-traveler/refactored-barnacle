@@ -1,2 +1,3 @@
 {"pattern": "", "text": "", "level": 1}
 {"pattern": ".", "text": "a", "level": 2}
+{"pattern": "(())+", "text": "", "level": 4}

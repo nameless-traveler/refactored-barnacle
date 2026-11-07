@@ -7,8 +7,8 @@ the current level, so difficulty ramps up without a human. Each level includes a
 |---|---|---|
 | 1 | literals `a b c`, concatenation, empty pattern | done |
 | 2 | `.` | done |
-| 3 | greedy `*` `+` `?` | todo |
-| 4 | alternation `|`, groups `( )` | todo |
+| 3 | greedy `*` `+` `?` | done |
+| 4 | alternation `|`, groups `( )` | done |
 | 5 | classes `[ab]` `[^a]` `[a-c]` | todo |
 | 6 | anchors `^` `$` | todo |
 | 7 | counted repeats `{m}` `{m,}` `{m,n}` | todo |

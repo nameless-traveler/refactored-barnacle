@@ -78,35 +78,40 @@ def match(pattern: str, text: str):
         mn = node.min
         mx = node.max
         lazy = node.lazy
-        levels = [(pos,)]
-        frontier = (pos,)
-        k = 0
-        cap = n + 1 if mx is None else mx
-        while k < cap:
-            k += 1
-            nxt = []
-            seen = set()
-            for p in frontier:
-                for e in ends(node.node, p):
-                    if e == p:
-                        continue
-                    if e not in seen:
-                        seen.add(e)
-                        nxt.append(e)
-            if not nxt:
-                break
-            levels.append(tuple(nxt))
-            frontier = tuple(nxt)
-        last = len(levels) - 1
-        if mn > last:
-            return ()
-        acc = []
-        ks = range(mn, last + 1)
-        if not lazy:
-            ks = reversed(ks)
-        for kk in ks:
-            acc.extend(levels[kk])
-        return tuple(acc)
+        results = []
+        seen = set()
+
+        def add(e):
+            if e not in seen:
+                seen.add(e)
+                results.append(e)
+
+        def dfs(cur, count):
+            # Greedy leftmost-first backtracking: try to extend (more iterations)
+            # before settling, trying the subpattern's ends in preference order.
+            # An empty match counts as an iteration; it terminates the repeat once
+            # the minimum is satisfied (extra phase), but still counts toward min.
+            if mx is None or count < mx:
+                for e in ends(node.node, cur):
+                    if e == cur:
+                        nc = count + 1
+                        if nc >= mn:
+                            # Extra phase: an empty match terminates the repeat.
+                            add(cur)
+                        else:
+                            # Still satisfying the minimum: keep iterating at cur.
+                            dfs(cur, nc)
+                    else:
+                        nc = count + 1
+                        dfs(e, nc)
+                        if nc >= mn:
+                            add(e)
+            # Stopping here with `count` iterations is a valid (backtrack) option.
+            if count >= mn:
+                add(cur)
+
+        dfs(pos, 0)
+        return tuple(results)
 
     ends0 = ends(ast, 0)
     if not ends0:
