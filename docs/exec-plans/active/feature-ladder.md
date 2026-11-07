@@ -13,7 +13,7 @@ the current level, so difficulty ramps up without a human. Each level includes a
 | 6 | anchors `^` `$` | todo |
 | 7 | counted repeats `{m}` `{m,}` `{m,n}` | done |
 | 8 | lazy quantifiers `*?` `+?` `??` `{m,n}?` | done |
-| 9 | capture group spans compared | todo |
+| 9 | capture group spans compared | done |
 | 10 | backreferences `\1`..`\9` | todo |
 
 Level 9 is the hardest to match exactly: CPython has specific behaviour for groups inside repeats that
