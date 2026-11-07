@@ -17,4 +17,10 @@ class Match:
 
 def match(pattern: str, text: str) -> Optional[Match]:
     """Behave like re.match(pattern, text): anchored at index 0, leftmost-first backtracking."""
-    raise NotImplementedError("regex engine not implemented yet")
+    i = 0
+    n = len(text)
+    for ch in pattern:
+        if i >= n or text[i] != ch:
+            return None
+        i += 1
+    return Match(0, i)
