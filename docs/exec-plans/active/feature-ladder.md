@@ -5,7 +5,7 @@ the current level, so difficulty ramps up without a human. Each level includes a
 
 | Level | Adds | Status |
 |---|---|---|
-| 1 | literals `a b c`, concatenation, empty pattern | todo |
+| 1 | literals `a b c`, concatenation, empty pattern | done |
 | 2 | `.` | todo |
 | 3 | greedy `*` `+` `?` | todo |
 | 4 | alternation `|`, groups `( )` | todo |
