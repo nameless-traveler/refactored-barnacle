@@ -1,0 +1,7 @@
+# Paths the solver agent may NOT change. tools/verify.py fails the PR if the diff touches any of them.
+# fnmatch patterns; '*' also matches '/'.
+tools/*
+.github/*
+harness/*
+tests/test_harness_*
+tests/test_corpus.py

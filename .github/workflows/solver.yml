@@ -1,0 +1,108 @@
+name: solver
+# solve (agent, has the API key) -> verify (fresh VM, NO key, checks the oracle) -> merge.
+# Only people with write access can dispatch this; the finder dispatches it with GITHUB_TOKEN,
+# which is allowed for workflow_dispatch.
+on:
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number to solve
+        required: true
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+concurrency:
+  group: harness-solver
+  cancel-in-progress: false
+env:
+  ISSUE: ${{ inputs.issue }}
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+jobs:
+  solve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      branch: ${{ steps.push.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false   # the agent must not be able to push with the token
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build prompt
+        run: python tools/build_prompt.py "$ISSUE" > "$RUNNER_TEMP/prompt.md"
+      - name: Install agent CLI
+        run: npm install -g @kilocode/cli
+      - name: Run agent
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          AGENT_TIMEOUT_SEC: '5400'
+        run: bash tools/run_agent.sh "$RUNNER_TEMP/prompt.md"
+      - name: Push branch
+        id: push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BR="agent/issue-${ISSUE}-${{ github.run_id }}"
+          git checkout -b "$BR"
+          git add -A
+          if git diff --cached --quiet; then echo "agent made no changes"; exit 1; fi
+          git commit -m "agent: fix #${ISSUE}"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git"
+          git push origin "$BR"
+          echo "branch=$BR" >> "$GITHUB_OUTPUT"
+
+  verify:
+    needs: solve
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.solve.outputs.branch }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Extract the issue's case
+        run: |
+          gh issue view "$ISSUE" --json body -q .body | grep '^CASE: ' | sed 's/^CASE: //' > "$RUNNER_TEMP/case.json"
+          test -s "$RUNNER_TEMP/case.json"
+      - name: Verify with a fresh seed
+        run: python tools/verify.py --base origin/main --case "$RUNNER_TEMP/case.json" --seed ${{ github.run_id }}
+
+  merge:
+    needs: [solve, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Open PR, squash-merge, loop
+        env:
+          BR: ${{ needs.solve.outputs.branch }}
+        run: |
+          gh pr create --head "$BR" --base main --title "agent: fix #${ISSUE}" \
+            --body "Fixes #${ISSUE}. Verified in a separate job with no API key (run ${{ github.run_id }})."
+          gh pr merge "$BR" --squash --delete-branch
+          gh issue close "$ISSUE" --reason completed || true
+          gh issue edit "$ISSUE" --remove-label agent || true
+          gh workflow run finder.yml
+
+  on-failure:
+    needs: [solve, verify, merge]
+    if: ${{ always() && (needs.solve.result != 'success' || needs.verify.result != 'success' || needs.merge.result != 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Park the issue for a human and try the next one
+        run: |
+          gh issue edit "$ISSUE" --remove-label agent --add-label agent-failed || true
+          gh issue comment "$ISSUE" --body "Solver run ${{ github.run_id }} did not produce a verified fix. Needs a human look." || true
+          gh workflow run finder.yml || true
