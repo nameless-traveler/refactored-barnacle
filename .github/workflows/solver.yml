@@ -27,16 +27,16 @@ jobs:
     outputs:
       branch: ${{ steps.push.outputs.branch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false   # the agent must not be able to push with the token
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
-      - uses: actions/setup-node@v4
+          python-version: '3.13'
+      - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: '24'
       - name: Build prompt
         run: python tools/build_prompt.py "$ISSUE" > "$RUNNER_TEMP/prompt.md"
       - name: Install agent CLI
@@ -44,6 +44,8 @@ jobs:
       - name: Run agent
         env:
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          KILO_API_KEY: ${{ secrets.LLM_API_KEY }}
+          AGENT_MODEL: kilo/nvidia/nemotron-3.5-super-vl:free
           AGENT_TIMEOUT_SEC: '5400'
         run: bash tools/run_agent.sh "$RUNNER_TEMP/prompt.md"
       - name: Push branch
@@ -65,13 +67,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.solve.outputs.branch }}
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: '3.13'
       - name: Extract the issue's case
         run: |
           gh issue view "$ISSUE" --json body -q .body | grep '^CASE: ' | sed 's/^CASE: //' > "$RUNNER_TEMP/case.json"
