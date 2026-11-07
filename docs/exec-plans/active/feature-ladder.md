@@ -12,7 +12,7 @@ the current level, so difficulty ramps up without a human. Each level includes a
 | 5 | classes `[ab]` `[^a]` `[a-c]` | todo |
 | 6 | anchors `^` `$` | todo |
 | 7 | counted repeats `{m}` `{m,}` `{m,n}` | done |
-| 8 | lazy quantifiers `*?` `+?` `??` `{m,n}?` | todo |
+| 8 | lazy quantifiers `*?` `+?` `??` `{m,n}?` | done |
 | 9 | capture group spans compared | todo |
 | 10 | backreferences `\1`..`\9` | todo |
 
