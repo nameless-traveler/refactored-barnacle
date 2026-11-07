@@ -142,6 +142,9 @@ class _Parser:
                 j += 1
             if num2:
                 mx = int(num2)
+            # {m,} stays unbounded (mx = None)
+        else:
+            mx = mn  # {m} means exactly m repetitions
         if j < len(s) and s[j] == "}":
             j += 1
         else:
