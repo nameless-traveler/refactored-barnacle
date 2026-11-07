@@ -109,13 +109,22 @@ class _Parser:
         c = self.peek()
         if c == "*":
             self.i += 1
-            return (0, None, False)
+            lazy = self.peek() == "?"
+            if lazy:
+                self.i += 1
+            return (0, None, lazy)
         if c == "+":
             self.i += 1
-            return (1, None, False)
+            lazy = self.peek() == "?"
+            if lazy:
+                self.i += 1
+            return (1, None, lazy)
         if c == "?":
             self.i += 1
-            return (0, 1, False)
+            lazy = self.peek() == "?"
+            if lazy:
+                self.i += 1
+            return (0, 1, lazy)
         if c == "{":
             return self._braces()
         return None
