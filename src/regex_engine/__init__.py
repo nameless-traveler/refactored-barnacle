@@ -1,26 +1,5 @@
-"""Regex engine under construction. The contract lives in docs/references/semantics.md.
+"""Public API: `match(pattern, text)` and `Match`, behaving like CPython's `re.match`."""
+from .matcher import match
+from .nodes import Match
 
-Agents: replace the stub below. Keep modules layered (see ARCHITECTURE.md).
-"""
-from dataclasses import dataclass
-from typing import Optional, Tuple
-
-
-@dataclass(frozen=True)
-class Match:
-    start: int
-    end: int
-    # One entry per capture group, in order of the opening parenthesis:
-    # (start, end) if the group took part in the match, otherwise None.
-    groups: Tuple[Optional[Tuple[int, int]], ...] = ()
-
-
-def match(pattern: str, text: str) -> Optional[Match]:
-    """Behave like re.match(pattern, text): anchored at index 0, leftmost-first backtracking."""
-    i = 0
-    n = len(text)
-    for ch in pattern:
-        if i >= n or text[i] != ch:
-            return None
-        i += 1
-    return Match(0, i)
+__all__ = ["match", "Match"]
