@@ -14,7 +14,7 @@ the current level, so difficulty ramps up without a human. Each level includes a
 | 7 | counted repeats `{m}` `{m,}` `{m,n}` | done |
 | 8 | lazy quantifiers `*?` `+?` `??` `{m,n}?` | done |
 | 9 | capture group spans compared | done |
-| 10 | backreferences `\1`..`\9` | todo |
+| 10 | backreferences `\1`..`\9` | done |
 
 Level 9 is the hardest to match exactly: CPython has specific behaviour for groups inside repeats that
 match empty. Expect the agent to need several attempts there.
