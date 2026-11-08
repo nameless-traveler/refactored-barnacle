@@ -1,169 +1,86 @@
-"""Backtracking matcher. May import nodes and parser."""
+"""Backtracking matcher (continuation passing). May import nodes and parser."""
 from . import nodes
 from .parser import parse
+
+
+def _in_class(ch, cls):
+    hit = any(lo <= ch <= hi for lo, hi in cls.members)
+    return hit != cls.neg
 
 
 def match(pattern: str, text: str):
     """Behave like re.match(pattern, text): anchored at index 0, leftmost-first backtracking."""
     ast = parse(pattern)
     n = len(text)
-    memo = {}
-    computing = set()
 
-    def spans_key(spans):
-        return tuple(sorted(spans.items()))
+    def m(node, pos, caps, k):
+        """Match node at pos; call k(new_pos, new_caps) for each way, best first; return the first non-None."""
+        t = type(node)
+        if t is nodes.Empty:
+            return k(pos, caps)
+        if t is nodes.Lit:
+            return k(pos + 1, caps) if pos < n and text[pos] == node.ch else None
+        if t is nodes.Dot:
+            return k(pos + 1, caps) if pos < n and text[pos] != "\n" else None
+        if t is nodes.CharClass:
+            return k(pos + 1, caps) if pos < n and _in_class(text[pos], node) else None
+        if t is nodes.Anchor:
+            ok = pos == 0 if node.kind == "^" else pos == n
+            return k(pos, caps) if ok else None
+        if t is nodes.Backref:
+            span = caps.get(node.ref)
+            if span is None:
+                return None
+            sub = text[span[0]:span[1]]
+            return k(pos + len(sub), caps) if text.startswith(sub, pos) else None
+        if t is nodes.Group:
+            return m(node.node, pos, caps, lambda p, c: k(p, {**c, node.number: (pos, p)}))
+        if t is nodes.Alt:
+            for branch in node.branches:
+                r = m(branch, pos, caps, k)
+                if r is not None:
+                    return r
+            return None
+        if t is nodes.Concat:
+            def step(i, p, c):
+                if i == len(node.items):
+                    return k(p, c)
+                return m(node.items[i], p, c, lambda p2, c2: step(i + 1, p2, c2))
+            return step(0, pos, caps)
+        if t is nodes.Repeat:
+            def loop(count, p, c, last):
+                def more():
+                    if node.max is not None and count >= node.max:
+                        return None
+                    return m(node.node, p, c, lambda p2, c2: loop(count + 1, p2, c2, p))
+                if count < node.min:                      # must iterate: no choice
+                    return m(node.node, p, c, lambda p2, c2: loop(count + 1, p2, c2, p))
+                if p == last:                             # previous iteration was empty: stop looping
+                    return k(p, c)
+                if node.lazy:
+                    r = k(p, c)
+                    return r if r is not None else more()
+                r = more()
+                return r if r is not None else k(p, c)
+            return loop(0, pos, caps, -1)
+        raise TypeError(node)
 
-    def ends(node, pos, spans):
-        """All (end_pos, spans) reachable by matching `node` at `pos`, in preference order.
+    def done(end, caps):
+        return end, caps
 
-        `spans` maps a capture-group number to the (start, end) of its last participation
-        within this sub-match (last iteration wins for groups inside repeats).
-        """
-        key = (id(node), pos, spans_key(spans))
-        if key in memo:
-            return memo[key]
-        if key in computing:
-            # Empty-match loop: only the zero-length option is safe to return.
-            return ((pos, spans),)
-        computing.add(key)
-        try:
-            result = _ends(node, pos, spans)
-        finally:
-            computing.discard(key)
-        memo[key] = result
-        return result
-
-    def _ends(node, pos, spans):
-        if isinstance(node, nodes.Empty):
-            return ((pos, spans),)
-        if isinstance(node, nodes.Lit):
-            if pos < n and text[pos] == node.ch:
-                return ((pos + 1, spans),)
-            return ()
-        if isinstance(node, nodes.Dot):
-            if pos < n and text[pos] != "\n":
-                return ((pos + 1, spans),)
-            return ()
-        if isinstance(node, nodes.CharClass):
-            if pos < n and _in_class(text[pos], node):
-                return ((pos + 1, spans),)
-            return ()
-        if isinstance(node, nodes.Concat):
-            acc = ((pos, spans),)
-            for item in node.items:
-                nxt = ()
-                for p, sp in acc:
-                    for e, s2 in ends(item, p, sp):
-                        nxt += ((e, {**sp, **s2}),)
-                acc = nxt
-                if not acc:
-                    break
-            return acc
-        if isinstance(node, nodes.Alt):
-            acc = ()
-            for br in node.branches:
-                acc += ends(br, pos, spans)
-            return acc
-        if isinstance(node, nodes.Repeat):
-            return _ends_repeat(node, pos, spans)
-        if isinstance(node, nodes.Group):
-            out = []
-            for end, inner in ends(node.node, pos, spans):
-                out.append((end, {**inner, node.number: (pos, end)}))
-            return tuple(out)
-        if isinstance(node, nodes.Anchor):
-            if node.kind == "^":
-                return ((pos, spans),) if pos == 0 else ()
-            return ((pos, spans),) if pos == n else ()
-        if isinstance(node, nodes.Backref):
-            ref = node.ref
-            if ref in spans and spans[ref] is not None:
-                s, e = spans[ref]
-                length = e - s
-                if text[pos:pos + length] == text[s:e]:
-                    return ((pos + length, spans),)
-            return ()
-        return ()
-
-    def _in_class(ch, cls):
-        for lo, hi in cls.members:
-            if lo <= ch <= hi:
-                return not cls.neg
-        return cls.neg
-
-    def _ends_repeat(node, pos, spans):
-        mn = node.min
-        mx = node.max
-        lazy = node.lazy
-        results = []
-        seen = set()
-
-        def add(end, sp):
-            key = (end, spans_key(sp))
-            if key not in seen:
-                seen.add(key)
-                results.append((end, sp))
-
-        def dfs(cur, count, sp):
-            if lazy:
-                # Lazy (leftmost-first): prefer fewer iterations first.
-                if count >= mn:
-                    add(cur, sp)
-                if mx is None or count < mx:
-                    for end, inner in ends(node.node, cur, sp):
-                        merged = {**sp, **inner}
-                        if end == cur:
-                            nc = count + 1
-                            if nc >= mn:
-                                add(cur, merged)
-                            else:
-                                dfs(cur, nc, merged)
-                        else:
-                            nc = count + 1
-                            dfs(end, nc, merged)
-                            if nc >= mn:
-                                add(end, merged)
-            else:
-                # Greedy: prefer more iterations first.
-                if mx is None or count < mx:
-                    for end, inner in ends(node.node, cur, sp):
-                        merged = {**sp, **inner}
-                        if end == cur:
-                            nc = count + 1
-                            if nc >= mn:
-                                add(cur, merged)
-                            else:
-                                dfs(cur, nc, merged)
-                        else:
-                            nc = count + 1
-                            dfs(end, nc, merged)
-                            if nc >= mn:
-                                add(end, merged)
-                # Stopping here with `count` iterations is a valid (backtrack) option.
-                if count >= mn:
-                    add(cur, sp)
-
-        dfs(pos, 0, spans)
-        return tuple(results)
-
-    ends0 = ends(ast, 0, {})
-    if not ends0:
+    res = m(ast, 0, {}, done)
+    if res is None:
         return None
-    end, spans = ends0[0]
-    ngroups = _count_groups(ast)
-    groups = tuple(spans.get(i) for i in range(1, ngroups + 1))
-    return nodes.Match(0, end, groups)
+    end, caps = res
+    return nodes.Match(0, end, tuple(caps.get(i) for i in range(1, _ngroups(ast) + 1)))
 
 
-def _count_groups(node) -> int:
-    """Total number of capturing groups opened in the AST."""
-    best = 0
-    stack = [node]
+def _ngroups(node):
+    best, stack = 0, [node]
     while stack:
         cur = stack.pop()
         if isinstance(cur, nodes.Group):
-            if cur.number > best:
-                best = cur.number
+            best = max(best, cur.number)
             stack.append(cur.node)
         elif isinstance(cur, nodes.Concat):
             stack.extend(cur.items)
