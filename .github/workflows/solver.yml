@@ -18,12 +18,13 @@ concurrency:
   cancel-in-progress: false
 env:
   ISSUE: ${{ inputs.issue }}
-  GH_TOKEN: ${{ github.token }}
   GH_REPO: ${{ github.repository }}
+  # GH_TOKEN is deliberately NOT set here: it is given only to steps that need it, so the agent step
+  # cannot read a write-capable token from its environment.
 jobs:
   solve:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 60
     outputs:
       branch: ${{ steps.push.outputs.branch }}
     steps:
@@ -33,12 +34,17 @@ jobs:
           persist-credentials: false   # the agent must not be able to push with the token
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.13'
+          python-version-file: harness/python-version.txt
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
-      - name: Build prompt
-        run: python tools/build_prompt.py "$ISSUE" > "$RUNNER_TEMP/prompt.md"
+      - name: Build prompt and extract the issue's case (fails fast if not a finder issue)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python tools/build_prompt.py "$ISSUE" > "$RUNNER_TEMP/prompt.md"
+          gh issue view "$ISSUE" --json body -q .body | grep '^CASE: ' | sed 's/^CASE: //' > "$RUNNER_TEMP/case.json"
+          test -s "$RUNNER_TEMP/case.json"
       - name: Install agent CLI
         run: npm install -g @kilocode/cli
       - name: Run agent
@@ -46,10 +52,39 @@ jobs:
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           KILO_API_KEY: ${{ secrets.LLM_API_KEY }}
           AGENT_MODEL: kilo/nvidia/nemotron-3.5-super-vl:free
-          AGENT_TIMEOUT_SEC: '5400'
-        run: bash tools/run_agent.sh "$RUNNER_TEMP/prompt.md"
+          AGENT_TIMEOUT_SEC: '1800'   # 30 min: normal issues took minutes; longer means the agent is stuck
+        run: |
+          bash tools/run_agent.sh "$RUNNER_TEMP/prompt.md" 2>&1 | tee "$RUNNER_TEMP/agent.log" || echo "agent exited non-zero (checking the work anyway)"
+      - name: Collect transcripts (key redacted)
+        if: ${{ always() }}
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/transcripts"
+          git status --short > "$RUNNER_TEMP/changes.txt" 2>&1 || true
+          git diff HEAD > "$RUNNER_TEMP/changes.patch" 2>&1 || true
+          python - <<'PY'
+          import os
+          t = os.environ["RUNNER_TEMP"]
+          key = os.environ.get("LLM_API_KEY", "")
+          for name in ["prompt.md", "agent.log", "changes.txt", "changes.patch"]:
+              src = os.path.join(t, name)
+              if os.path.exists(src):
+                  text = open(src, errors="replace").read()
+                  open(os.path.join(t, "transcripts", name), "w").write(text.replace(key, "***REDACTED***") if key else text)
+          PY
+      - name: Upload transcripts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcripts-issue-${{ inputs.issue }}-run-${{ github.run_id }}
+          path: ${{ runner.temp }}/transcripts
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Push branch
         id: push
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -57,6 +92,8 @@ jobs:
           git checkout -b "$BR"
           git add -A
           if git diff --cached --quiet; then echo "agent made no changes"; exit 1; fi
+          python tools/corpus_add.py "$RUNNER_TEMP/case.json"   # the harness records the case, not the agent
+          git add -A
           git commit -m "agent: fix #${ISSUE}"
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git"
           git push origin "$BR"
@@ -66,6 +103,8 @@ jobs:
     needs: solve
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -73,7 +112,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.13'
+          python-version-file: harness/python-version.txt
       - name: Extract the issue's case
         run: |
           gh issue view "$ISSUE" --json body -q .body | grep '^CASE: ' | sed 's/^CASE: //' > "$RUNNER_TEMP/case.json"
@@ -85,6 +124,8 @@ jobs:
     needs: [solve, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Open PR, squash-merge, loop
         env:
@@ -102,9 +143,11 @@ jobs:
     if: ${{ always() && (needs.solve.result != 'success' || needs.verify.result != 'success' || needs.merge.result != 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Park the issue for a human and try the next one
         run: |
           gh issue edit "$ISSUE" --remove-label agent --add-label agent-failed || true
           gh issue comment "$ISSUE" --body "Solver run ${{ github.run_id }} did not produce a verified fix. Needs a human look." || true
-          gh workflow run finder.yml || true
+          gh workflow run finder.yml -f just_failed=true || true

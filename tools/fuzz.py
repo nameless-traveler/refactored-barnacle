@@ -32,8 +32,21 @@ def current_level() -> int:
         return int(fh.read().strip())
 
 
+def required_python() -> str:
+    with open(os.path.join(ROOT, "harness", "python-version.txt")) as fh:
+        return fh.read().strip()
+
+
+def check_python() -> None:
+    """The oracle is CPython's `re`; its behaviour must be identical everywhere. Fail loudly on drift."""
+    want, have = required_python(), "%d.%d" % sys.version_info[:2]
+    if want != have and not os.environ.get("ALLOW_PYTHON_MISMATCH"):
+        raise SystemExit("ORACLE VERSION MISMATCH: harness/python-version.txt requires Python %s but this is %s. "
+                         "Fix the workflow's setup-python step (do not edit the version file)." % (want, have))
+
+
 def load_engine():
-    sys.path.insert(0, os.path.join(ROOT, "src"))
+    sys.path.insert(0, os.environ.get("ENGINE_SRC") or os.path.join(ROOT, "src"))
     return importlib.import_module(os.environ.get("ENGINE_MODULE", "regex_engine"))
 
 
@@ -338,6 +351,35 @@ def fuzz(engine, level: int, seed: int, iters: int, max_seconds: float = 240.0, 
     return sorted(found.values(), key=lambda f: (len(f["pattern"]) + len(f["text"]), f["pattern"], f["text"]))
 
 
+def iter_cases(level: int, seed: int, iters: int):
+    """Engine-independent stream of (pattern, text): one seed gives the same cases for every engine."""
+    rng = random.Random(seed)
+    for _ in range(iters):
+        pattern = Gen(rng, level).pattern()
+        texts = ["".join(rng.choice(ALPHA) for _ in range(rng.randint(0, 7))) for _ in range(4)]
+        try:
+            re.compile(pattern)
+        except re.error:
+            continue
+        for text in texts:
+            yield pattern, text
+
+
+def dump_failures(engine, level: int, seed: int, iters: int, max_seconds: float, path: str):
+    """Record which case indices fail, so two engines (main vs branch) can be compared case by case."""
+    deadline = time.monotonic() + max_seconds
+    done, failed = 0, []
+    for idx, (pattern, text) in enumerate(iter_cases(level, seed, iters)):
+        if time.monotonic() > deadline:
+            break
+        done = idx + 1
+        if run_case(engine, pattern, text, level) is not None:
+            failed.append(idx)
+    with open(path, "w") as fh:
+        json.dump({"done": done, "failed": failed}, fh)
+    return done, failed
+
+
 HINTS = {
     "mismatch": "compare with re.match(pattern, text); see docs/references/semantics.md (leftmost-first, not longest)",
     "timeout": "the engine must terminate; look for loops that make no progress on empty matches",
@@ -362,10 +404,17 @@ def main(argv=None) -> int:
     ap.add_argument("--case", help="JSON object, or path to a JSON file, with pattern and text")
     ap.add_argument("--json", help="write all failures to this file")
     ap.add_argument("--show", type=int, default=5, help="how many failures to print")
+    ap.add_argument("--dump-failures", help="write failing case indices (engine-independent stream) to this JSON file")
     args = ap.parse_args(argv)
 
+    check_python()
     level = args.level or current_level()
     engine = load_engine()
+
+    if args.dump_failures:
+        done, failed = dump_failures(engine, level, args.seed, args.iters, args.max_seconds, args.dump_failures)
+        print("level %d seed %d: %d cases run, %d failing" % (level, args.seed, done, len(failed)))
+        return 0
 
     if args.case:
         raw = args.case if args.case.lstrip().startswith("{") else open(args.case).read()

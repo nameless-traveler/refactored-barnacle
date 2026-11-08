@@ -5,6 +5,11 @@ on:
   schedule:
     - cron: '23 */6 * * *'
   workflow_dispatch:
+    inputs:
+      just_failed:
+        description: Set by the solver when it just failed (counts toward the auto-pause cap)
+        required: false
+        default: 'false'
 permissions:
   contents: write
   issues: write
@@ -18,9 +23,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # finder reads the git history of harness/PAUSE
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version-file: harness/python-version.txt
       - name: Configure git
         run: |
           git config user.name "github-actions[bot]"
@@ -29,4 +36,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          JUST_FAILED: ${{ inputs.just_failed }}
         run: python tools/finder.py

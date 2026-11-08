@@ -48,6 +48,50 @@ def known_fingerprints() -> set[str]:
     return found
 
 
+MAX_CONSECUTIVE_FAILURES = int(os.environ.get("MAX_CONSECUTIVE_FAILURES", "4"))
+
+
+def parse_time(text: str) -> datetime.datetime:
+    return datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+
+
+def count_failures(runs: list, since=None) -> int:
+    """runs: solver runs, newest first. Failed runs since the last success (or since `since`)."""
+    n = 0
+    for r in runs:
+        if r["status"] != "completed":
+            continue
+        if since is not None and parse_time(r["createdAt"]) <= since:
+            break
+        if r["conclusion"] == "success":
+            break
+        if r["conclusion"] in ("failure", "timed_out"):
+            n += 1
+    return n
+
+
+def last_pause_change():
+    out = subprocess.run(["git", "log", "-1", "--format=%cI", "--", "harness/PAUSE"], cwd=ROOT,
+                         capture_output=True, text=True).stdout.strip()
+    return parse_time(out) if out else None
+
+
+def auto_pause(n: int) -> None:
+    """Too many failures in a row: stop spending requests and ask a human."""
+    note = "Auto-paused after %d consecutive solver failures. Delete this file to resume.\n" % n
+    with open(os.path.join(ROOT, "harness", "PAUSE"), "w") as fh:
+        fh.write(note)
+    subprocess.run(["git", "add", "harness/PAUSE"], cwd=ROOT, check=True)
+    subprocess.run(["git", "commit", "-m", "harness: auto-pause after %d consecutive solver failures" % n], cwd=ROOT, check=True)
+    subprocess.run(["git", "push"], cwd=ROOT, check=True)
+    subprocess.run(["gh", "label", "create", "needs-human", "--color", "d93f0b", "--force"], capture_output=True)
+    gh("issue", "create", "--label", "needs-human", "--title", "Harness auto-paused: %d solver runs failed in a row" % n,
+       "--body", "The finder stopped itself to avoid wasting free requests.\n\nLook at the latest failed solver runs "
+       "(Actions -> solver) and their transcript artifacts. When ready, delete `harness/PAUSE` to resume; "
+       "counting restarts from that moment.")
+    print("auto-paused after %d consecutive failures" % n)
+
+
 def issue_text(f: dict) -> tuple[str, str]:
     title = "[L%d] %s: pattern=%r text=%r" % (f["level"], f["kind"], f["pattern"], f["text"])
     case = json.dumps({"pattern": f["pattern"], "text": f["text"], "level": f["level"]})
@@ -88,11 +132,17 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=None)
     args = ap.parse_args()
     dry = args.dry_run
+    fuzz.check_python()
 
     if os.path.exists(os.path.join(ROOT, "harness", "PAUSE")):
         print("harness/PAUSE exists; doing nothing")
         return 0
     if not dry:
+        runs = json.loads(gh("run", "list", "--workflow", "solver.yml", "--limit", "30", "--json", "status,conclusion,createdAt"))
+        failures = count_failures(runs, last_pause_change()) + (1 if os.environ.get("JUST_FAILED") == "true" else 0)
+        if failures >= MAX_CONSECUTIVE_FAILURES:
+            auto_pause(failures)
+            return 0
         if in_flight():
             print("an issue is already in flight; doing nothing")
             return 0
