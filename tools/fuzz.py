@@ -267,9 +267,30 @@ def norm_actual(m, level):
     return out
 
 
+ORACLE_TIMEOUT = 2.0  # seconds; `re` itself can be exponential on odd patterns, and we must not wait for it
+
+
+def ref_match(pattern: str, text: str):
+    """re.match with a time limit. Returns (True, match) or (False, None) if the oracle itself was too slow."""
+    signal.signal(signal.SIGALRM, _on_alarm)
+    signal.setitimer(signal.ITIMER_REAL, ORACLE_TIMEOUT)
+    try:
+        return True, re.match(pattern, text)
+    except CaseTimeout:
+        return False, None
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+
+
 def run_case(engine, pattern: str, text: str, level: int):
-    """Return None if the engine agrees with `re`, else a failure dict."""
-    expected = norm_ref(re.match(pattern, text), level)
+    """Return None if the engine agrees with `re`, else a failure dict.
+
+    A case on which `re` itself is too slow is skipped (returns None): there is no trustworthy answer to compare with.
+    """
+    ok, ref = ref_match(pattern, text)
+    if not ok:
+        return None
+    expected = norm_ref(ref, level)
     signal.signal(signal.SIGALRM, _on_alarm)
     signal.setitimer(signal.ITIMER_REAL, CASE_TIMEOUT)
     kind, actual, error = None, None, None

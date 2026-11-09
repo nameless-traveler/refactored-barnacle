@@ -23,18 +23,22 @@ wins and is returned all the way up. Returning `None` means "this way failed, ba
 
 - Below `min` you must iterate. At or above `min`: greedy tries one more iteration first and then stops
   (`k`); lazy tries stopping first and then one more iteration. Respect `max`.
-- **Empty-iteration guard:** do not start another iteration if the previous iteration started at the same
-  position it ended (it matched the empty string). The empty iteration is still kept, with its captures,
-  and the loop then just continues with `k`.
+- **Empty-iteration guard:** an *optional* iteration (one beyond `min`) is not started if the previous
+  optional iteration began at the same position it is now at (it matched the empty string). The empty
+  iteration is still kept, with its captures, and the loop then just continues with `k`.
+  **Forced iterations (`count < min`) never update that remembered position**: pass `last` through unchanged
+  and set it only when you start an optional iteration (this is the `more()` branch in the code below).
   - `(a*)*` on `aab` -> group 1 is `''` (the final empty iteration overwrites `aa`).
   - `(a?)*` on `aa` -> group 1 is `''`.
   - `(a*?)*` on `aa` -> matches `''`, group 1 is `''`.
   - `(a*)*?b` on `aaab` -> group 1 is `aaa` (lazy outer: try `b` first).
+  - `([c]??a?){1,2}a(.{1})?` on `ca` -> group 2 is `c`, span `(0, 1)`. The forced first iteration is empty,
+    and a second, optional iteration is still allowed to start at the same position.
 - Groups inside a repeat keep their value from earlier iterations unless a later iteration sets them:
   `(?:(a)|b)*` on `ab` -> group 1 is `a`.
 - A group that did not take part is `None`; a backreference to such a group fails.
 
-## Reference implementation (fuzzed against `re`: level 10, 3 seeds x 1500 patterns, no differences)
+## Reference implementation (agrees with `re` on level-10 fuzzing for most seeds; see the known weakness below)
 
 Use it as is, or write your own along the same lines. Keep it small: no memo tables, no result lists.
 
@@ -93,8 +97,8 @@ def match(pattern: str, text: str):
                     if node.max is not None and count >= node.max:
                         return None
                     return m(node.node, p, c, lambda p2, c2: loop(count + 1, p2, c2, p))
-                if count < node.min:                      # must iterate: no choice
-                    return m(node.node, p, c, lambda p2, c2: loop(count + 1, p2, c2, p))
+                if count < node.min:                      # must iterate: `last` is NOT updated here
+                    return m(node.node, p, c, lambda p2, c2: loop(count + 1, p2, c2, last))
                 if p == last:                             # previous iteration was empty: stop looping
                     return k(p, c)
                 if node.lazy:
@@ -130,6 +134,21 @@ def _ngroups(node):
             stack.append(cur.node)
     return best
 ```
+
+## Known weakness: nested repeats can be too slow
+
+Plain backtracking is exponential on stacked, ambiguous repeats such as `((x*)*)*` or `(((.*b{0,}){2,}){0,}|a){2,}`.
+CPython's `re` is also exponential there, but it is written in C and about 50x faster, so it finishes inside
+the 0.5 s limit where this code does not. Examples that time out with the reference code above:
+`a|((b{0}){0,}b{0}(.|[b]{0}|a{3})*){0,}acc{0}` on `bcaaaa`, and
+`$|[a]{1}(((.*b{0,}){2,}){0,}|[a]){2,}c` on `abb`.
+
+Ideas, not yet tried or measured; check each with `python tools/fuzz.py` before keeping it:
+- Simplify the AST before matching: `X{0}` can become `Empty` (the group never takes part, so its capture is `None`),
+  `X{1}` is just `X`, and empty items in a Concat can be dropped.
+- Without backreferences in the pattern, whether a state fails depends only on where you are in the pattern and
+  the text position, never on the captures. Remembering failed states then cuts the exponential blow-up.
+  This needs the "where are we in the pattern" part of the state to be hashable, e.g. by numbering the nodes.
 
 ## Debugging checklist
 

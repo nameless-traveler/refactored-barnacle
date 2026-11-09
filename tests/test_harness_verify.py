@@ -2,12 +2,14 @@
 import datetime
 import os
 import sys
+import time
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import finder  # noqa: E402
 import verify  # noqa: E402
+import fuzz  # noqa: E402
 
 
 def run(conclusion, status="completed", created="2026-11-08T10:00:00Z"):
@@ -38,6 +40,20 @@ class FailureCapTest(unittest.TestCase):
         runs = [run("failure", created="2026-11-08T12:00:00Z"), run("failure", created="2026-11-08T08:00:00Z")]
         since = datetime.datetime(2026, 11, 8, 10, 0, tzinfo=datetime.timezone.utc)
         self.assertEqual(finder.count_failures(runs, since), 1)
+
+
+class OracleGuardTest(unittest.TestCase):
+    def test_catastrophic_oracle_case_is_skipped_quickly(self):
+        old = fuzz.ORACLE_TIMEOUT
+        fuzz.ORACLE_TIMEOUT = 0.2
+        try:
+            started = time.time()
+            ok, m = fuzz.ref_match(r"(a+)+b", "a" * 60)   # exponential in CPython's re
+            self.assertFalse(ok)
+            self.assertLess(time.time() - started, 2.0)
+            self.assertEqual(fuzz.ref_match("a*", "aa")[0], True)
+        finally:
+            fuzz.ORACLE_TIMEOUT = old
 
 
 if __name__ == "__main__":
