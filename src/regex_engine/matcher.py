@@ -13,26 +13,60 @@ def match(pattern: str, text: str):
     ast = parse(pattern)
     n = len(text)
 
+    # Memo of standalone failures for atomic nodes: an atomic node that cannot
+    # match at (pos) with the given (relevant) caps fails independently of the
+    # continuation, so caching that failure bounds empty-match backtracking.
+    fail_memo = {}
+
+    def _fail(node, pos, caps, key):
+        fail_memo[key] = None
+        return None
+
     def m(node, pos, caps, k):
         """Match node at pos; call k(new_pos, new_caps) for each way, best first; return the first non-None."""
         t = type(node)
         if t is nodes.Empty:
             return k(pos, caps)
         if t is nodes.Lit:
-            return k(pos + 1, caps) if pos < n and text[pos] == node.ch else None
+            key = (id(node), pos)
+            if key in fail_memo:
+                return None
+            if pos < n and text[pos] == node.ch:
+                return k(pos + 1, caps)
+            return _fail(node, pos, caps, key)
         if t is nodes.Dot:
-            return k(pos + 1, caps) if pos < n and text[pos] != "\n" else None
+            key = (id(node), pos)
+            if key in fail_memo:
+                return None
+            if pos < n and text[pos] != "\n":
+                return k(pos + 1, caps)
+            return _fail(node, pos, caps, key)
         if t is nodes.CharClass:
-            return k(pos + 1, caps) if pos < n and _in_class(text[pos], node) else None
+            key = (id(node), pos)
+            if key in fail_memo:
+                return None
+            if pos < n and _in_class(text[pos], node):
+                return k(pos + 1, caps)
+            return _fail(node, pos, caps, key)
         if t is nodes.Anchor:
+            key = (id(node), pos)
+            if key in fail_memo:
+                return None
             ok = pos == 0 if node.kind == "^" else pos == n
-            return k(pos, caps) if ok else None
+            if ok:
+                return k(pos, caps)
+            return _fail(node, pos, caps, key)
         if t is nodes.Backref:
+            key = (id(node), pos, caps.get(node.ref))
+            if key in fail_memo:
+                return None
             span = caps.get(node.ref)
             if span is None:
-                return None
+                return _fail(node, pos, caps, key)
             sub = text[span[0]:span[1]]
-            return k(pos + len(sub), caps) if text.startswith(sub, pos) else None
+            if text.startswith(sub, pos):
+                return k(pos + len(sub), caps)
+            return _fail(node, pos, caps, key)
         if t is nodes.Group:
             return m(node.node, pos, caps, lambda p, c: k(p, {**c, node.number: (pos, p)}))
         if t is nodes.Alt:
