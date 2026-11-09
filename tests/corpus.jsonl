@@ -8,3 +8,4 @@
 {"pattern": "(((a?|.{1})?|c{2}c{3})+[c]?\\2*)*.{0}", "text": "abbcccc", "level": 10}
 {"pattern": "(.{2})\\1a{0}|([c]??a?){1,2}a(.{1})?", "text": "ca", "level": 10}
 {"pattern": "((([c]){0}|(b?c{0}|b*){1,})+\\2{2,})?a", "text": "bb", "level": 10}
+{"pattern": ".(a*|b*|.?.?){3,}c+[b]+", "text": "accacac", "level": 10}
