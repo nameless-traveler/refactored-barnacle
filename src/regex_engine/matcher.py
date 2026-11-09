@@ -54,7 +54,7 @@ def match(pattern: str, text: str):
                         return None
                     return m(node.node, p, c, lambda p2, c2: loop(count + 1, p2, c2, p))
                 if count < node.min:                      # must iterate: no choice
-                    return m(node.node, p, c, lambda p2, c2: loop(count + 1, p2, c2, p))
+                    return m(node.node, p, c, lambda p2, c2: loop(count + 1, p2, c2, last))
                 if p == last:                             # previous iteration was empty: stop looping
                     return k(p, c)
                 if node.lazy:

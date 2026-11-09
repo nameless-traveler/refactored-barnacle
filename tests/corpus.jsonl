@@ -6,3 +6,4 @@
 {"pattern": "()", "text": "", "level": 9}
 {"pattern": "(c?)\\1", "text": "", "level": 10}
 {"pattern": "(((a?|.{1})?|c{2}c{3})+[c]?\\2*)*.{0}", "text": "abbcccc", "level": 10}
+{"pattern": "(.{2})\\1a{0}|([c]??a?){1,2}a(.{1})?", "text": "ca", "level": 10}
