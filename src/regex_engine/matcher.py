@@ -8,22 +8,41 @@ def _in_class(ch, cls):
     return hit != cls.neg
 
 
+def _min_width(node):
+    t = type(node)
+    if t is nodes.Empty:
+        return 0
+    if t is nodes.Lit:
+        return 1
+    if t is nodes.Dot:
+        return 1
+    if t is nodes.CharClass:
+        return 1
+    if t is nodes.Anchor:
+        return 0
+    if t is nodes.Backref:
+        return 0
+    if t is nodes.Group:
+        return _min_width(node.node)
+    if t is nodes.Alt:
+        return min(_min_width(b) for b in node.branches)
+    if t is nodes.Concat:
+        return sum(_min_width(i) for i in node.items)
+    if t is nodes.Repeat:
+        return node.min * _min_width(node.node)
+    raise TypeError(node)
+
+
 def match(pattern: str, text: str):
-    """Behave like re.match(pattern, text): anchored at index 0, leftmost-first backtracking."""
     ast = parse(pattern)
     n = len(text)
-
-    # Memo of standalone failures for atomic nodes: an atomic node that cannot
-    # match at (pos) with the given (relevant) caps fails independently of the
-    # continuation, so caching that failure bounds empty-match backtracking.
+    if n < _min_width(ast):
+        return None
     fail_memo = {}
-
     def _fail(node, pos, caps, key):
         fail_memo[key] = None
         return None
-
     def m(node, pos, caps, k):
-        """Match node at pos; call k(new_pos, new_caps) for each way, best first; return the first non-None."""
         t = type(node)
         if t is nodes.Empty:
             return k(pos, caps)
@@ -87,9 +106,9 @@ def match(pattern: str, text: str):
                     if node.max is not None and count >= node.max:
                         return None
                     return m(node.node, p, c, lambda p2, c2: loop(count + 1, p2, c2, p))
-                if count < node.min:                      # must iterate: no choice
+                if count < node.min:
                     return m(node.node, p, c, lambda p2, c2: loop(count + 1, p2, c2, last))
-                if p == last:                             # previous iteration was empty: stop looping
+                if p == last:
                     return k(p, c)
                 if node.lazy:
                     r = k(p, c)
@@ -98,17 +117,13 @@ def match(pattern: str, text: str):
                 return r if r is not None else k(p, c)
             return loop(0, pos, caps, -1)
         raise TypeError(node)
-
     def done(end, caps):
         return end, caps
-
     res = m(ast, 0, {}, done)
     if res is None:
         return None
     end, caps = res
     return nodes.Match(0, end, tuple(caps.get(i) for i in range(1, _ngroups(ast) + 1)))
-
-
 def _ngroups(node):
     best, stack = 0, [node]
     while stack:
